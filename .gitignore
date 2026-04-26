@@ -1,0 +1,92 @@
+# Secrets
+.env
+.env.*
+.envrc
+
+# Project data / generated docs
+input_docs/*
+output_docs/*
+data/uploads/
+data/processed/
+data/private/
+data/samples/raw_pdfs/
+data/samples/extracted_text/
+
+# Keep folder placeholders if you add them
+!input_docs/.gitkeep
+!output_docs/.gitkeep
+!data/uploads/.gitkeep
+!data/processed/.gitkeep
+!data/private/.gitkeep
+
+# Python
+__pycache__/
+*.py[codz]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Builds / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+MANIFEST
+
+# Tests / coverage / lint
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+
+# Logs / local DBs
+*.log
+db.sqlite3
+db.sqlite3-journal
+
+# Notebooks / editors
+.ipynb_checkpoints/
+.DS_Store
+.idea/
+.vscode/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform.tfvars.json
+.terraform.lock.hcl
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# Misc
+.pdm-python
+.pdm-build/
+.pixi/
+__pypackages__/
