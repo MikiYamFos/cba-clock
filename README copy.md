@@ -63,7 +63,7 @@ cba-clock/
     app/
     tests/
 
-  frontend/             # Review UI and timeline views
+  frontend/             # Streamlit review UI for MVP; React UI later if needed
     src/
 
   infra/
@@ -83,6 +83,7 @@ cba-clock/
     evaluation/         # Labeled clause test cases
     uploads/            # Ignored local uploads
     processed/          # Ignored generated output
+``` 
 
 ## Infrastructure Strategy
 
