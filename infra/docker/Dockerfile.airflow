@@ -1,0 +1,25 @@
+FROM apache/airflow:3.2.1
+
+USER root
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+RUN pip install --no-cache-dir \
+    apache-airflow-providers-standard \
+    pdfplumber \
+    pandas \
+    requests \
+    beautifulsoup4 \
+    lxml \
+    pymupdf \
+    anthropic \
+    "elasticsearch==9.3.0" \
+    python-dateutil \
+    holidays \
+    python-dotenv \
+    psycopg2-binary \
+    minio

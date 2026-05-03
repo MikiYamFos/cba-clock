@@ -12,4 +12,4 @@ RUN pip install uv && uv sync --frozen --no-dev
 
 COPY worker ./worker
 
-CMD ["uv", "run", "python", "-m", "worker.app.main"]
+CMD ["uv", "run", "python", "worker/app/main.py"]
