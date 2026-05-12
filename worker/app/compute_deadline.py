@@ -31,6 +31,7 @@ def compute_deadline(
     offset_days: int,
     unit: str,
     holiday_schedule: set[str] | None = None,
+    work_schedule: list[int] | None = None,
 ) -> str:
     """
     Compute a deadline date from a trigger date, offset_days, and unit.
@@ -60,7 +61,14 @@ def compute_deadline(
         return (start + timedelta(days=offset_days)).isoformat()
 
     if unit in ("working_days", "business_days"):
-        return _add_working_days(start, offset_days, holidays).isoformat()
+        if work_schedule is None:
+            raise ValueError(
+                    "work_schedule is required for working_days and business_days. "
+                    "Pass a list of integers (0=Monday, 6=Sunday) representing which "
+                    "days of the week this bargaining unit works. Cannot assume Mon-Fri "
+                    "without contract confirmation."
+                )
+        return _add_working_days(start, offset_days, holidays, work_schedule).isoformat()
 
     if unit == "weeks":
         return (start + timedelta(weeks=offset_days)).isoformat()
@@ -78,20 +86,31 @@ def compute_deadline(
     )
 
 
-def _add_working_days(start: date, days: int, holidays: set[date]) -> date:
+def _add_working_days(
+    start: date,
+    days: int,
+    holidays: set[date],
+    work_schedule: list[int],
+) -> date:
     """
     Add `days` working days to `start`.
 
-    Skips weekends always (Sat/Sun are never working days).
-    Skips dates in `holidays` — which is whatever the contract defines,
-    not an assumed federal or national schedule.
+    Working days are defined by work_schedule — a list of weekday integers
+    (0=Monday, 6=Sunday) representing which days this bargaining unit works.
+    Never assumes Mon-Fri. A casino might pass [0,1,2,3,4,5,6]; a school
+    cafeteria might pass [0,1,2,3,4].
+
+    Skips dates in holidays — non-working days explicitly defined by the
+    contract. Holidays with premium pay are NOT in holidays because the
+    employee still works that day.
     """
+    working_days_set = set(work_schedule)
     current = start
     remaining = days
 
     while remaining > 0:
         current += timedelta(days=1)
-        if current.weekday() < 5 and current not in holidays:
+        if current.weekday() in working_days_set and current not in holidays:
             remaining -= 1
 
     return current
@@ -104,6 +123,7 @@ def describe_deadline(
     action: str,
     party: str,
     holiday_schedule: set[str] | None = None,
+    work_schedule: list[int] | None = None,
 ) -> dict:
     """
     Compute a deadline and return a human-readable description.
@@ -121,7 +141,9 @@ def describe_deadline(
         Dict with deadline date, day of week, plain-English description,
         and a warning if the deadline falls on a weekend or a contract holiday.
     """
-    deadline_str = compute_deadline(trigger_date, offset_days, unit, holiday_schedule)
+    deadline_str = compute_deadline(
+            trigger_date, offset_days, unit, holiday_schedule, work_schedule
+        )
     deadline = date.fromisoformat(deadline_str)
     day_of_week = deadline.strftime("%A")
 

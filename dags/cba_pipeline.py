@@ -3,7 +3,9 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/opt/cba_clock")
+import os
+
+sys.path.insert(0, os.environ.get("PROJECT_ROOT", "/opt/cba_clock"))
 
 from datetime import datetime, timedelta
 
@@ -17,9 +19,14 @@ from worker.app.section_extraction import ContractSection, ContractSectionExtrac
 from worker.app.claude_extraction import DeadlineExtractor
 from worker.app.es_client import CBASectionIndexer
 from worker.app.metadata_lookup import lookup
-from worker.app.db import upsert_cba
+from worker.app.db import (
+    upsert_cba,
+    get_cba_id,
+    upsert_cba_section,
+    insert_timing_rule,
+)
 
-PROJECT_ROOT = Path("/opt/cba_clock")
+PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/opt/cba_clock"))
 RAW_PDF_DIR = PROJECT_ROOT / "data" / "samples" / "raw_pdfs"
 TEXT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / "extracted_text"
 REPORT_OUTPUT = PROJECT_ROOT / "data" / "processed" / "quality_report.csv"
@@ -32,15 +39,6 @@ default_args = {
     "retry_delay": timedelta(minutes=2),
 }
 
-# ---------------------------------------------------------------------------
-# Helper: resolve which PDFs to process from dag_run.conf
-#
-# dag_run.conf options:
-#   filename:  "foo.pdf"              → process one file
-#   filenames: ["foo.pdf","bar.pdf"]  → process a specific set
-#   (neither)                         → process all PDFs in RAW_PDF_DIR
-#   overwrite: true                   → re-process even if already done
-# ---------------------------------------------------------------------------
 
 def get_target_pdfs(context) -> list[Path]:
     conf = context["dag_run"].conf or {}
@@ -79,7 +77,9 @@ def task_extract_text(**context) -> None:
             continue
         result = extractor.extract(pdf_path)
         extractor.save_text(result, TEXT_OUTPUT_DIR)
-        print(f"  {pdf_path.name}: {result.extraction_quality} ({result.total_chars} chars)")
+        print(
+            f"  {pdf_path.name}: {result.extraction_quality} ({result.total_chars} chars)"
+        )
 
 
 def task_populate_cba_metadata(**context) -> None:
@@ -89,10 +89,14 @@ def task_populate_cba_metadata(**context) -> None:
     for pdf_path in pdfs:
         metadata = lookup(pdf_path.name)
         if not metadata:
-            print(f"  WARNING: No metadata found for {pdf_path.name} in either source CSV")
+            print(
+                f"  WARNING: No metadata found for {pdf_path.name} in either source CSV"
+            )
             continue
         cba_id = upsert_cba(metadata)
-        print(f"  {pdf_path.name}: cba.id={cba_id} employer={metadata.employer_name} expiration={metadata.expiration_date}")
+        print(
+            f"  {pdf_path.name}: cba.id={cba_id} employer={metadata.employer_name} expiration={metadata.expiration_date}"
+        )
 
 
 def task_quality_report(**context) -> None:
@@ -109,15 +113,17 @@ def task_quality_report(**context) -> None:
         if not pdf_path.exists():
             continue
         result = extractor.extract(pdf_path)
-        rows.append({
-            "filename": pdf_path.name,
-            "page_count": result.page_count,
-            "pages_with_text": result.pages_with_text,
-            "total_chars": result.total_chars,
-            "avg_chars_per_page": round(result.avg_chars_per_page, 1),
-            "quality": result.extraction_quality,
-            "flags": "|".join(result.quality_flags),
-        })
+        rows.append(
+            {
+                "filename": pdf_path.name,
+                "page_count": result.page_count,
+                "pages_with_text": result.pages_with_text,
+                "total_chars": result.total_chars,
+                "avg_chars_per_page": round(result.avg_chars_per_page, 1),
+                "quality": result.extraction_quality,
+                "flags": "|".join(result.quality_flags),
+            }
+        )
 
     new_df = pd.DataFrame(rows)
 
@@ -147,20 +153,24 @@ def task_section_inventory(**context) -> None:
     rows = []
     for text_path in [TEXT_OUTPUT_DIR / stem for stem in target_stems]:
         if not text_path.exists():
-            print(f"  WARNING: {text_path.name} not found — was text extraction successful?")
+            print(
+                f"  WARNING: {text_path.name} not found — was text extraction successful?"
+            )
             continue
         sections = section_extractor.extract_sections(text_path)
         for section in sections:
             labels = section_extractor.classify_section(section)
-            rows.append({
-                "source_file": section.source_file,
-                "article_number": section.article_number,
-                "article_title": section.article_title,
-                "start_char": section.start_char,
-                "end_char": section.end_char,
-                "char_length": section.end_char - section.start_char,
-                "labels": "|".join(labels),
-            })
+            rows.append(
+                {
+                    "source_file": section.source_file,
+                    "article_number": section.article_number,
+                    "article_title": section.article_title,
+                    "start_char": section.start_char,
+                    "end_char": section.end_char,
+                    "char_length": section.end_char - section.start_char,
+                    "labels": "|".join(labels),
+                }
+            )
 
     new_df = pd.DataFrame(rows)
 
@@ -174,7 +184,9 @@ def task_section_inventory(**context) -> None:
 
     INVENTORY_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     combined.to_csv(INVENTORY_OUTPUT, index=False)
-    print(f"Section inventory updated: {len(rows)} sections from {len(target_stems)} file(s)")
+    print(
+        f"Section inventory updated: {len(rows)} sections from {len(target_stems)} file(s)"
+    )
 
 
 def task_index_sections(**context) -> None:
@@ -278,13 +290,121 @@ def task_extract_deadlines(**context) -> None:
 
     total_rules = sum(len(r.timing_rules) for r in results)
     errors = sum(1 for r in results if r.error)
-    print(f"Extraction complete: {len(results)} sections, {total_rules} rules, {errors} errors")
+    print(
+        f"Extraction complete: {len(results)} sections, {total_rules} rules, {errors} errors"
+    )
+
+
+def task_persist_timing_rules(**context) -> None:
+    """
+    Reads Claude's timing rule extractions from the JSONL and writes them
+    to Postgres in the correct order:
+      1. Look up cba.id from the source_file (written by task_populate_cba_metadata)
+      2. Upsert cba_section for each article
+      3. Insert timing_rule for each rule (immutable — skip if already exists)
+
+    This task runs after task_extract_deadlines so all extractions are complete
+    before we start writing to Postgres.
+    """
+    if not DEADLINES_OUTPUT.exists():
+        print("No deadline extractions found — skipping Postgres persist")
+        return
+
+    pdfs = get_target_pdfs(context)
+    target_stems = {p.stem + ".txt" for p in pdfs}
+
+    # Load inventory for section metadata (start_char, end_char, labels)
+    if not INVENTORY_OUTPUT.exists():
+        raise FileNotFoundError(f"Section inventory not found at {INVENTORY_OUTPUT}")
+
+    inventory = pd.read_csv(INVENTORY_OUTPUT)
+    # Build lookup: (source_file, article_number) → inventory row
+    inventory_lookup = {
+        (row["source_file"], str(row["article_number"])): row
+        for _, row in inventory.iterrows()
+    }
+
+    sections_written = 0
+    rules_written = 0
+    skipped = 0
+
+    with DEADLINES_OUTPUT.open() as f:
+        for line in f:
+            record = json.loads(line)
+            source_file = record["source_file"]
+
+            if source_file not in target_stems:
+                continue
+
+            if record.get("error"):
+                print(
+                    f"  Skipping {source_file} article {record['article_number']} — extraction error"
+                )
+                skipped += 1
+                continue
+
+            if not record.get("timing_rules"):
+                continue
+
+            # Look up cba.id — must exist from task_populate_cba_metadata
+            # The source_file in JSONL is a .txt filename, cba table has .pdf
+            pdf_filename = source_file.replace(".txt", ".pdf")
+            cba_id = get_cba_id(pdf_filename)
+            if not cba_id:
+                print(
+                    f"  WARNING: No cba record found for {pdf_filename} — run metadata task first"
+                )
+                skipped += 1
+                continue
+
+            # Upsert the section
+            inv_key = (source_file, str(record["article_number"]))
+            inv_row = inventory_lookup.get(inv_key)
+            labels = (
+                inv_row["labels"].split("|")
+                if inv_row is not None
+                and pd.notna(inv_row.get("labels"))
+                and inv_row.get("labels")
+                else []
+            )
+            start_char = int(inv_row["start_char"]) if inv_row is not None else 0
+            end_char = int(inv_row["end_char"]) if inv_row is not None else 0
+
+            cba_section_id = upsert_cba_section(
+                cba_id=cba_id,
+                article_number=str(record["article_number"]),
+                article_title=record["article_title"],
+                start_char=start_char,
+                end_char=end_char,
+                labels=labels,
+            )
+            sections_written += 1
+
+            # Insert each timing rule — immutable, skip if already exists
+            for rule in record["timing_rules"]:
+                insert_timing_rule(
+                    cba_section_id=cba_section_id,
+                    rule_id=rule.get("rule_id"),
+                    action=rule.get("action", ""),
+                    trigger=rule.get("trigger", ""),
+                    offset_days=int(rule.get("offset", 0)),
+                    unit=rule.get("unit", ""),
+                    party=rule.get("party"),
+                    quote=rule.get("quote"),
+                    is_ambiguous=bool(rule.get("is_ambiguous", False)),
+                    ambiguity_note=rule.get("notes"),
+                )
+                rules_written += 1
+
+    print(
+        f"Postgres persist complete: {sections_written} sections, {rules_written} rules, {skipped} skipped"
+    )
 
 
 with DAG(
     dag_id="cba_pipeline",
     default_args=default_args,
-    description="Process CBAs: extract text, populate metadata, build section inventory, index to Elasticsearch, extract deadlines",
+    description="Process CBAs: extract text, populate metadata, build section inventory, index to Elasticsearch, extract deadlines, persist to Postgres",
     schedule=None,
     start_date=datetime(2025, 1, 1),
     catchup=False,
@@ -326,4 +446,18 @@ with DAG(
         python_callable=task_extract_deadlines,
     )
 
-    download >> extract >> metadata >> report >> inventory >> index >> deadlines
+    persist = PythonOperator(
+        task_id="persist_timing_rules",
+        python_callable=task_persist_timing_rules,
+    )
+
+    (
+        download
+        >> extract
+        >> metadata
+        >> report
+        >> inventory
+        >> index
+        >> deadlines
+        >> persist
+    )
