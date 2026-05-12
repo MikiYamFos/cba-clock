@@ -89,4 +89,4 @@ build/
 .pdm-python
 .pdm-build/
 .pixi/
-__pypackages__/
+__pypackages__/.claude/

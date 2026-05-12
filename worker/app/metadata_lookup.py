@@ -14,11 +14,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import os
+from pathlib import Path
 import pandas as pd
+from dotenv import load_dotenv
 
-PROJECT_ROOT = Path("/opt/cba_clock")
+load_dotenv()
+
+PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/opt/cba_clock"))
 OPM_CSV = PROJECT_ROOT / "data" / "sample_sources" / "opm_cba_sources.csv"
 DOL_CSV = PROJECT_ROOT / "data" / "sample_sources" / "dol_cba_sources.csv"
+
 
 
 @dataclass

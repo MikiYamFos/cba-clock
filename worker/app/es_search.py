@@ -18,6 +18,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from elasticsearch import Elasticsearch
+from dotenv import load_dotenv
+
+load_dotenv()
 
 INDEX_NAME = "cba_sections"
 
